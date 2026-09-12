@@ -1,0 +1,1 @@
+import {notFound} from "next/navigation"; import {canManageGlobalData,requireUser} from "@/lib/auth"; export default async function Layout({children}:{children:React.ReactNode}){const user=await requireUser();if(!canManageGlobalData(user.role))notFound();return children}

@@ -1,0 +1,1 @@
+import {Role} from "@prisma/client";import{redirect}from"next/navigation";import{getSessionUser}from"./auth";export async function requireOwnerPage(){const user=await getSessionUser();if(!user)redirect("/login");if(user.role!==Role.OWNER)redirect("/");return user}

@@ -1,0 +1,12 @@
+node_modules/
+.next/
+.stitch-reference/
+.edge-qa/
+.vercel/
+qa-*.png
+.env
+.env.local
+.env.*.local
+!.env.example
+*.tsbuildinfo
+npm-debug.log*

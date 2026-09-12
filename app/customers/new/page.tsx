@@ -1,0 +1,1 @@
+import Link from "next/link"; import CustomerForm from "../customer-form"; export default function NewCustomer(){return <main className="p-8 max-w-2xl"><Link className="gold" href="/customers">← Customers</Link><h1 className="text-3xl font-bold my-5">New Customer</h1><CustomerForm/></main>}

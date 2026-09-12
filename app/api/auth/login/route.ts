@@ -1,0 +1,5 @@
+import { NextResponse } from "next/server";
+import { COOKIE_NAME, createSessionValue, sessionCookieOptions } from "@/lib/auth";
+import { verifyPassword } from "@/lib/password";
+import { prisma } from "@/lib/prisma";
+export async function POST(request: Request) { const body = await request.json().catch(() => null) as { username?: string; password?: string } | null; if (!body?.username || !body.password) return NextResponse.json({ error: "Username and password are required" }, { status: 400 }); const user = await prisma.user.findFirst({ where: { OR: [{ username: body.username }, { email: body.username }] } }); if (!user?.active || !(await verifyPassword(body.password, user.passwordHash))) return NextResponse.json({ error: "Invalid credentials" }, { status: 401 }); const response = NextResponse.json({ user: { id: user.id, username: user.username, name: user.name, role: user.role, marketScope: user.marketScope } }); response.cookies.set(COOKIE_NAME, createSessionValue(user.id), sessionCookieOptions()); await prisma.auditLog.create({ data: { userId: user.id, action: "LOGIN", entity: "User", entityId: user.id } }); return response; }

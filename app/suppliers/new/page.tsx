@@ -1,0 +1,1 @@
+import Link from "next/link"; import SupplierForm from "../supplier-form"; export default function NewSupplier(){return <main className="p-8 max-w-2xl"><Link className="gold" href="/suppliers">← Suppliers</Link><h1 className="text-3xl font-bold my-5">New Supplier</h1><SupplierForm/></main>}

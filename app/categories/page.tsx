@@ -1,0 +1,2 @@
+import CategoryList from "./category-list"; import {requireOwnerPage} from "@/lib/page-auth"; import {prisma} from "@/lib/prisma"; export const dynamic="force-dynamic";
+export default async function Categories(){await requireOwnerPage();const rows=await prisma.category.findMany({include:{department:true,parent:true},orderBy:{name:"asc"}});return <CategoryList rows={JSON.parse(JSON.stringify(rows))}/>}

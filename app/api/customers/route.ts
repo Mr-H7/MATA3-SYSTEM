@@ -1,0 +1,5 @@
+import { NextResponse } from "next/server";
+import { canAccessMarket, requireUser } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
+export async function GET(){const user=await requireUser();const rows=await prisma.customer.findMany({include:{market:true},orderBy:{name:"asc"}});return NextResponse.json(rows.filter((row)=>canAccessMarket(user,row.market.code)));}
+export async function POST(request:Request){try{const user=await requireUser();const body=await request.json();const market=await prisma.market.findUniqueOrThrow({where:{code:body.marketCode}});if(!canAccessMarket(user,market.code))return NextResponse.json({error:"Market access denied"},{status:403});if(!body.name?.trim()||!body.phone?.trim())return NextResponse.json({error:"Name and phone are required"},{status:400});const row=await prisma.customer.create({data:{name:body.name.trim(),phone:body.phone.trim(),email:body.email||null,marketId:market.id,city:body.city||null,address:body.address||null,notes:body.notes||null}});return NextResponse.json(row,{status:201})}catch(error){return NextResponse.json({error:error instanceof Error?error.message:"Create failed"},{status:400})}}

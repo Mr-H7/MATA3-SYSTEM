@@ -1,0 +1,1 @@
+import Link from"next/link";import{requireOwnerPage}from"@/lib/page-auth";import UserForm from"../user-form";export default async function NewUser(){await requireOwnerPage();return <main className="p-8 max-w-2xl"><Link href="/users" className="gold">← Users</Link><h1 className="text-3xl font-bold my-5">New User</h1><UserForm/></main>}
