@@ -22,6 +22,7 @@ Database-first internal commerce operations for MATA3 — مَتاع across Egyp
    - `DATABASE_URL` to the local PostgreSQL connection string.
    - `SESSION_SECRET` to a cryptographically random value of at least 32 bytes.
    - `SEED_OWNER_PASSWORD` and `SEED_SELLER_PASSWORD` to temporary strong initial passwords.
+   - `BLOB_READ_WRITE_TOKEN` to the existing Vercel Blob store token for production product-image uploads. Local development falls back to `public/uploads`.
 
    Never commit `.env` or paste its values into issues, logs, or chat.
 
@@ -53,12 +54,18 @@ npm run lint
 npm run build
 ```
 
+With the local server running on port 3100, the catalogue/sourcing integration matrix can be run with:
+
+```powershell
+npm run test:commerce-upgrade
+```
+
 ## Operational guarantees
 
 - PostgreSQL is the source of truth; Prisma migrations are committed under `prisma/migrations`.
 - Egypt and Morocco prices, currency, inventory, suppliers, and sales remain independent.
 - Sales and virtual-bundle component deductions are committed in one serializable transaction.
-- Sale items preserve product, variant, market, currency, price, and cost snapshots.
+- Sale items preserve product, variant, market, currency, price, cost, and exact inventory-allocation snapshots. Returns use those immutable allocations rather than current listing configuration.
 - Stock adjustments always create inventory movements and cannot produce negative physical stock.
 - Role and market permissions are enforced at server/API boundaries. Seller payloads exclude cost, margin, inventory valuation, private supplier data, and owner reporting.
 - Full CSV/XLSX exports are owner-only and query current PostgreSQL state.
@@ -77,4 +84,9 @@ Do not run `prisma migrate reset` or the development seed against production bus
 
 ## Public website integration
 
-The internal database is intended to become the single commerce source of truth. Future public catalogue endpoints must use explicit read-only projections and must never expose costs, margins, private supplier data, inventory history, users, audit logs, or internal notes.
+PostgreSQL is the canonical catalogue. Owner-managed publication is market-specific and defaults to `DRAFT`.
+
+- `GET /api/public/products?market=EGYPT&page=1&pageSize=24`
+- `GET /api/public/products/[slug]?market=MOROCCO`
+
+The endpoints are unauthenticated, read-only, and return only published, active listings. Their explicit projection includes localized names/descriptions, brand, category/department, market currency and approved selling price, images, exact variant size/color, inventory type, and public availability. It excludes cost, supplier, source market, margin, valuation, internal notes, users, audit data, and inventory movement history.

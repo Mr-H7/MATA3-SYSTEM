@@ -12,7 +12,7 @@ type NavGroup = { label: string; items: NavItem[] };
 const ownerNavigation: NavGroup[] = [
   { label: "Overview", items: [{ label: "Dashboard", href: "/", icon: "▦" }] },
   { label: "Commerce", items: [{ label: "Sales", href: "/sales", icon: "▤" }, { label: "New Sale", href: "/sales/new", icon: "+" }, { label: "Returns", href: "/returns", icon: "↩" }, { label: "Customers", href: "/customers", icon: "♙" }] },
-  { label: "Catalogue", items: [{ label: "Products", href: "/catalogue", icon: "◇" }, { label: "Inventory", href: "/inventory", icon: "▣" }, { label: "Bundles", href: "/bundles", icon: "▱" }, { label: "Categories", href: "/categories", icon: "⌑" }] },
+  { label: "Catalogue", items: [{ label: "Products", href: "/catalogue", icon: "◇" }, { label: "Web Products", href: "/web-products", icon: "◈" }, { label: "Inventory", href: "/inventory", icon: "▣" }, { label: "Bundles", href: "/bundles", icon: "▱" }, { label: "Categories", href: "/categories", icon: "⌑" }] },
   { label: "Management", items: [{ label: "Suppliers", href: "/suppliers", icon: "▥" }, { label: "Markets", href: "/markets", icon: "◎" }, { label: "Targets", href: "/targets", icon: "↗" }, { label: "Users / Staff", href: "/users", icon: "♚" }] },
   { label: "Intelligence", items: [{ label: "Reports", href: "/reports", icon: "▥" }, { label: "Shift Close", href: "/shift-close", icon: "◷" }, { label: "Export", href: "/export", icon: "⇧" }] },
   { label: "System", items: [{ label: "Settings", href: "/settings", icon: "⚙" }] },
@@ -28,7 +28,7 @@ const sellerNavigation: NavGroup[] = [
 
 const routeNames: Record<string, string> = {
   "/": "Dashboard", "/catalogue": "Products", "/inventory": "Inventory", "/sales": "Sales / Invoices",
-  "/returns": "Returns", "/customers": "Customers", "/bundles": "Bundles", "/categories": "Categories",
+  "/returns": "Returns", "/customers": "Customers", "/bundles": "Bundles", "/categories": "Categories", "/web-products": "Web Products",
   "/suppliers": "Suppliers", "/markets": "Markets", "/targets": "Targets", "/users": "Users / Staff",
   "/reports": "Reports", "/shift-close": "Shift Close", "/export": "Export", "/settings": "Settings",
 };
@@ -46,7 +46,14 @@ export default function AppShell({ user, children }: { user: SessionUser | null;
   const [menuOpen, setMenuOpen] = useState(false);
   if (!user || pathname === "/login") return children;
   const seller = user.role === "SELLER";
-  const navigation = seller ? sellerNavigation : ownerNavigation;
+  const navigation = seller
+    ? sellerNavigation
+    : user.role === "OWNER"
+      ? ownerNavigation
+      : ownerNavigation.map((group) => ({
+          ...group,
+          items: group.items.filter((item) => item.href !== "/web-products"),
+        }));
   const marketLabel = user.marketScope === "ALL" ? "All Markets · EGP / MAD" : user.marketScope === "EGYPT" ? "Egypt · EGP" : "Morocco · MAD";
   const isActive = (href: string) => {
     if (href === "/") return pathname === "/";

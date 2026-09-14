@@ -1,4 +1,5 @@
 import { MarketScope, PrismaClient, Role } from "@prisma/client";
+import { ensureStandardDepartments } from "../lib/ensure-departments";
 import { hashPassword } from "../lib/password";
 
 const prisma = new PrismaClient();
@@ -53,6 +54,8 @@ async function main() {
     role: Role.OWNER,
     marketScope: MarketScope.ALL,
   });
+  await ensureStandardDepartments(prisma);
+
   await ensureUser({
     email: "poha@mata3.local",
     username: "poha",
