@@ -68,6 +68,11 @@ enum WebPublicationStatus {
   HIDDEN
 }
 
+enum WebMediaType {
+  IMAGE
+  VIDEO
+}
+
 enum SaleStatus {
   DRAFT
   CONFIRMED
@@ -133,6 +138,7 @@ model Department {
 
 model Category {
   id           String     @id @default(cuid())
+  publicKey    String     @unique @default(uuid())
   name         String
   departmentId String
   department   Department @relation(fields: [departmentId], references: [id])
@@ -185,6 +191,7 @@ model Product {
   saleItems     SaleItem[]
   bundleItems   BundleItem[]
   images        ProductImage[]    @relation("ProductImages")
+  webMedia      WebProductMedia[] @relation("ProductWebMedia")
 }
 
 model ProductVariant {
@@ -198,6 +205,7 @@ model ProductVariant {
   supplierCode String?
   barcode      String?
   images       ProductImage[]  @relation("VariantImages")
+  webMedia     WebProductMedia[] @relation("VariantWebMedia")
   listings     MarketListing[]
   saleItems    SaleItem[]
   bundleItems  BundleItem[]
@@ -217,6 +225,29 @@ model ProductImage {
   updatedAt DateTime        @updatedAt
 }
 
+model WebProductMedia {
+  id                String               @id @default(cuid())
+  type              WebMediaType
+  storageKey        String
+  url               String
+  altText           String
+  isCover           Boolean              @default(false)
+  sortOrder         Int                  @default(0)
+  publicationStatus WebPublicationStatus @default(DRAFT)
+  productId         String?
+  product           Product?             @relation("ProductWebMedia", fields: [productId], references: [id], onDelete: Restrict)
+  variantId         String?
+  variant           ProductVariant?      @relation("VariantWebMedia", fields: [variantId], references: [id], onDelete: Restrict)
+  bundleId          String?
+  bundle            Bundle?              @relation("BundleWebMedia", fields: [bundleId], references: [id], onDelete: Restrict)
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  @@index([productId, publicationStatus, sortOrder])
+  @@index([variantId, publicationStatus, sortOrder])
+  @@index([bundleId, publicationStatus, sortOrder])
+}
+
 model ProductSupplier {
   productId  String
   supplierId String
@@ -228,6 +259,7 @@ model ProductSupplier {
 
 model MarketListing {
   id                      String               @id @default(cuid())
+  publicOfferId           String               @unique @default(uuid())
   productId               String
   variantId               String?
   marketId                String
@@ -358,6 +390,8 @@ model SaleItemInventoryAllocation {
 
 model Bundle {
   id       String                @id @default(cuid())
+  publicSlug String?             @unique
+  webMedia WebProductMedia[]     @relation("BundleWebMedia")
   name     String
   items    BundleItem[]
   listings BundleMarketListing[]
@@ -377,6 +411,8 @@ model BundleItem {
 
 model BundleMarketListing {
   id              String  @id @default(cuid())
+  publicOfferId   String @unique @default(uuid())
+  webPublicationStatus WebPublicationStatus @default(DRAFT)
   bundleId        String
   bundle          Bundle  @relation(fields: [bundleId], references: [id])
   marketId        String

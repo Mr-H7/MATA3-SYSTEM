@@ -1,17 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getPublicProducts } from "@/lib/public-catalogue";
-
-const MARKETS = new Set(["EGYPT", "MOROCCO"]);
-
 export async function GET(request: NextRequest) {
-  const market = request.nextUrl.searchParams.get("market")?.toUpperCase() ?? "";
-  if (!MARKETS.has(market)) return NextResponse.json({ error: "market query parameter must be EGYPT or MOROCCO" }, { status: 400 });
-  const page = Number(request.nextUrl.searchParams.get("page") ?? "1");
-  const pageSize = Number(request.nextUrl.searchParams.get("pageSize") ?? "24");
+  const params = request.nextUrl.searchParams;
+  const market = params.get("market")?.toUpperCase() ?? "";
+  if (market !== "EGYPT" && market !== "MOROCCO") return NextResponse.json({ error: "Invalid market" }, { status: 400 });
+  const page = Number(params.get("page") ?? "1"), pageSize = Number(params.get("pageSize") ?? "24");
+  if (!Number.isInteger(page) || page < 1 || page > 100000 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 48) return NextResponse.json({ error: "Invalid pagination" }, { status: 400 });
+  const category = params.get("category") || undefined, query = params.get("q")?.trim() || undefined;
+  if ((category && category.length > 100) || (query && query.length > 100)) return NextResponse.json({ error: "Invalid filter" }, { status: 400 });
   try {
-    const payload = await getPublicProducts(market, page, pageSize);
-    return NextResponse.json(payload, { headers: { "Cache-Control": "public, s-maxage=60, stale-while-revalidate=120" } });
-  } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to load public catalogue" }, { status: 400 });
+    const payload = await getPublicProducts(market, page, pageSize, category, query);
+    return NextResponse.json(payload, { headers: { "Cache-Control": "public, s-maxage=60" } });
+  } catch {
+    return NextResponse.json({ error: "Unable to load catalogue" }, { status: 500 });
   }
 }
