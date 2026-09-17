@@ -25,3 +25,14 @@ The additive migration creates public offer/category keys and a partial unique i
 verify-public-catalogue.ts requires a fresh, migrated, isolated database named mata3_catalogue_v12a_test. verify-web-media.ts uses the same test data and a local System server on port 3101. Both refuse other database names. Store development fixtures are used only when no API base URL is configured outside production. Production requires MATA3_PUBLIC_API_BASE_URL and fails closed when absent.
 
 Checkout, orders, tracking, customer accounts, customer authentication, and customer addresses remain outside v1.2A.
+
+
+## v1.2B search and cart quote
+
+GET /api/public/v1/search requires market=EGYPT|MOROCCO. Optional q, category, color, size, minPriceMinor, maxPriceMinor, page, pageSize (1–48), and sort (name_asc, price_asc, price_desc) are validated. The version 1 response contains public product cards and published public bundle representations, total/page metadata, supportedSorts, and facets for the filtered market/result set. Product matching uses public names, public descriptions, and public category name; bundle matching uses its customer-facing name. Sorting is by name or authoritative market price. There is no inferred relevance score. GET /api/public/v1/search/suggestions accepts market and q and returns actual product and category suggestions.
+
+POST /api/public/v1/cart/quote accepts {market,lines:[{key,quantity,observedUnitAmountMinor?}]}. Keys are opaque public product offer or bundle offer IDs. The observed price is only a stale-state signal; System prices every valid line from current market listings. Response version 1 has currency, per-line canonical item data, unitPrice, lineTotal, stable codes, valid, itemsSubtotal, canProceed, and reservation:false. Prices are exact minor units in EGP or MAD. Invalid lines contribute zero to itemsSubtotal. canProceed requires every line valid and a nonempty cart. It indicates current eligibility to proceed toward a future checkout, not an order or reservation. Duplicate offers and bundle component demands aggregate across the full cart against effective physical inventory. The quote is a read-only repeatable-read transaction and neither changes inventory nor creates a sale.
+
+Stable line codes: INVALID_KEY, INVALID_QUANTITY, WRONG_MARKET, NOT_PUBLIC, UNAVAILABLE, BUNDLE_UNAVAILABLE, INSUFFICIENT_STOCK, PRICE_CHANGED. Public failures return generic errors. Nonphysical listings remain ineligible until explicit source-specific customer purchase rules are defined. Search currently materializes published candidates before sorting and paginating; large catalogue performance should be reviewed before high-volume rollout.
+
+For verification, reset only the local isolated mata3_catalogue_v12b_test database, apply the existing migrations, and run tsx scripts/verify-public-v12b.ts with DATABASE_URL set to that database. No v1.2B schema migration is required.
