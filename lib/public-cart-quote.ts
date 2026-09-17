@@ -97,9 +97,9 @@ async function quoteBundle(
   }
   line.demand = componentDemand;
 }
-export async function quotePublicCart(marketCode: string, inputs: QuoteRequestLine[]): Promise<PublicCartQuote | null> {
+export async function quotePublicCartInTransaction(tx: Prisma.TransactionClient, marketCode: string, inputs: QuoteRequestLine[]): Promise<PublicCartQuote | null> {
   if (marketCode !== "EGYPT" && marketCode !== "MOROCCO") return null;
-  return prisma.$transaction(async tx => {
+  {
     const market = await tx.market.findUnique({ where: { code: marketCode } });
     const currency = marketCode === "EGYPT" ? "EGP" : "MAD";
     if (!market || market.currency !== currency) return null;
@@ -143,5 +143,8 @@ export async function quotePublicCart(marketCode: string, inputs: QuoteRequestLi
       version: 1, market: marketCode, currency, lines: publicLines, itemsSubtotal,
       canProceed: publicLines.length > 0 && publicLines.every(line => line.valid), reservation: false,
     };
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
+  }
+}
+export async function quotePublicCart(marketCode: string, inputs: QuoteRequestLine[]): Promise<PublicCartQuote | null> {
+  return prisma.$transaction(tx => quotePublicCartInTransaction(tx, marketCode, inputs), { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
 }

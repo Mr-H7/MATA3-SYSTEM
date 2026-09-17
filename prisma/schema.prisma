@@ -83,6 +83,14 @@ enum SaleStatus {
   RETURNED
 }
 
+enum StorefrontOrderStatus {
+  RECEIVED
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
 enum PaymentStatus {
   PENDING
   PAID
@@ -127,6 +135,7 @@ model Market {
   returns         Return[]
   targets         Target[]
   shifts          ShiftClose[]
+  storefrontOrders StorefrontOrder[]
 }
 
 model Department {
@@ -422,6 +431,71 @@ model BundleMarketListing {
   price           Decimal @db.Decimal(12, 2)
 
   @@unique([bundleId, marketId])
+}
+
+model StorefrontOrder {
+  id                 String                 @id @default(cuid())
+  reference          String                 @unique
+  idempotencyKey     String                 @unique
+  requestHash        String
+  origin             String                 @default("STOREFRONT")
+  marketId           String
+  market             Market                 @relation(fields: [marketId], references: [id])
+  marketCode         String
+  currency           String                 @db.VarChar(3)
+  status             StorefrontOrderStatus  @default(RECEIVED)
+  paymentStatus      PaymentStatus          @default(PENDING)
+  customerName       String
+  normalizedPhone    String
+  email              String?
+  region             String
+  city               String
+  address            String
+  addressNotes       String?
+  deliveryCode       String
+  deliveryLabel      String
+  deliveryAmount     Decimal                @db.Decimal(12, 2)
+  paymentCode        String
+  paymentLabel       String
+  itemsSubtotal      Decimal                @db.Decimal(12, 2)
+  adjustments        Decimal                @default(0) @db.Decimal(12, 2)
+  grandTotal         Decimal                @db.Decimal(12, 2)
+  confirmationUntil  DateTime
+  placedAt           DateTime               @default(now())
+  lines              StorefrontOrderLine[]
+
+  @@index([normalizedPhone, reference])
+}
+
+model StorefrontOrderLine {
+  id           String                      @id @default(cuid())
+  orderId      String
+  order        StorefrontOrder             @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  kind         String
+  name         String
+  variantLabel String?
+  attributes   Json
+  quantity     Int
+  unitPrice    Decimal                     @db.Decimal(12, 2)
+  lineTotal    Decimal                     @db.Decimal(12, 2)
+  allocations  StorefrontOrderAllocation[]
+}
+
+model StorefrontOrderAllocation {
+  id                  String              @id @default(cuid())
+  lineId              String
+  line                StorefrontOrderLine @relation(fields: [lineId], references: [id], onDelete: Restrict)
+  inventoryId         String
+  sourceMarketCode    String
+  quantityPerOrderUnit Int
+
+  @@index([inventoryId])
+}
+
+model GuestTrackingThrottle {
+  key         String   @id
+  windowStart DateTime
+  attempts    Int
 }
 
 model AuditLog {
