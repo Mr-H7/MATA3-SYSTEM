@@ -136,6 +136,10 @@ model Market {
   targets         Target[]
   shifts          ShiftClose[]
   storefrontOrders StorefrontOrder[]
+  shippingDestinations ShippingDestination[]
+  shippingMethods ShippingMethod[]
+  shippingTariffs ShippingTariff[]
+  shippingConfiguration ShippingMarketConfiguration?
 }
 
 model Department {
@@ -433,6 +437,72 @@ model BundleMarketListing {
   @@unique([bundleId, marketId])
 }
 
+model ShippingMarketConfiguration {
+  id String @id @default(cuid())
+  marketId String @unique
+  market Market @relation(fields: [marketId], references: [id], onDelete: Restrict)
+  enabled Boolean @default(false)
+  updatedAt DateTime @updatedAt
+}
+
+model ShippingDestination {
+  id String @id @default(cuid())
+  publicKey String @unique @default(uuid())
+  marketId String
+  market Market @relation(fields: [marketId], references: [id], onDelete: Restrict)
+  kind ShippingDestinationKind
+  name String
+  parentId String?
+  parent ShippingDestination? @relation("DestinationTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children ShippingDestination[] @relation("DestinationTree")
+  tariffGroupCode String?
+  providerCityId String?
+  providerZoneId String?
+  providerDistrictId String?
+  active Boolean @default(false)
+  tariffs ShippingTariff[]
+  orders StorefrontOrder[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([marketId, parentId, active])
+}
+
+model ShippingMethod {
+  id String @id @default(cuid())
+  marketId String
+  market Market @relation(fields: [marketId], references: [id], onDelete: Restrict)
+  provider ShippingProvider
+  code String
+  label String
+  active Boolean @default(false)
+  tariffs ShippingTariff[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@unique([marketId, code])
+}
+
+model ShippingTariff {
+  id String @id @default(cuid())
+  marketId String
+  market Market @relation(fields: [marketId], references: [id], onDelete: Restrict)
+  methodId String
+  method ShippingMethod @relation(fields: [methodId], references: [id], onDelete: Restrict)
+  destinationId String?
+  destination ShippingDestination? @relation(fields: [destinationId], references: [id], onDelete: Restrict)
+  destinationGroupCode String?
+  packageClass String?
+  amountMinor Int
+  currency String @db.VarChar(3)
+  provenance ShippingPricingProvenance @default(APPROVED_TARIFF)
+  active Boolean @default(false)
+  effectiveFrom DateTime
+  effectiveTo DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([marketId, methodId, active, effectiveFrom])
+  @@index([destinationId])
+}
+
 model StorefrontOrder {
   id                 String                 @id @default(cuid())
   reference          String                 @unique
@@ -455,6 +525,13 @@ model StorefrontOrder {
   deliveryCode       String
   deliveryLabel      String
   deliveryAmount     Decimal                @db.Decimal(12, 2)
+  shippingDestinationId String?
+  shippingDestination ShippingDestination? @relation(fields: [shippingDestinationId], references: [id], onDelete: Restrict)
+  shippingDestinationSnapshot Json?
+  shippingProvider ShippingProvider?
+  shippingPricingProvenance ShippingPricingProvenance?
+  shippingTariffId String?
+  fulfillmentStatus FulfillmentStatus @default(NOT_READY)
   paymentCode        String
   paymentLabel       String
   itemsSubtotal      Decimal                @db.Decimal(12, 2)
@@ -570,4 +647,30 @@ model ShiftClose {
   closedAt         DateTime @default(now())
   closedById       String
   closedBy         User     @relation("ShiftCloser", fields: [closedById], references: [id], onDelete: Restrict)
+}
+
+enum ShippingProvider {
+  BOSTA
+  OZONEXPRESS
+}
+
+enum ShippingPricingProvenance {
+  APPROVED_TARIFF
+  PROVIDER_QUOTE
+}
+
+enum ShippingDestinationKind {
+  REGION
+  CITY
+  DISTRICT
+}
+
+enum FulfillmentStatus {
+  NOT_READY
+  READY_FOR_FULFILLMENT
+  MANUAL_FULFILLMENT
+  PROVIDER_PENDING
+  PROVIDER_CREATED
+  FULFILLED
+  FULFILLMENT_EXCEPTION
 }

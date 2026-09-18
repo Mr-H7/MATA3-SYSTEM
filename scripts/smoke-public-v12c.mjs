@@ -6,8 +6,7 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const system = process.cwd(), store = "E:\\MATA3 STORE";
 const url = new URL(process.env.DATABASE_URL);
-if (!["localhost", "127.0.0.1"].includes(url.hostname) || url.pathname !== "/mata3_catalogue_v12b_test") throw Error("Isolated local test DB required");
-const delivery = JSON.stringify([{ market: "EGYPT", code: "TEST_DELIVERY_EG", label: "Configured Egypt delivery", amountMinor: 5000, enabled: true }, { market: "MOROCCO", code: "TEST_DELIVERY_MA", label: "Configured Morocco delivery", amountMinor: 1500, enabled: true }]);
+if (!["localhost", "127.0.0.1"].includes(url.hostname) || !url.pathname.startsWith("/mata3_catalogue_v12b_test")) throw Error("Isolated local test DB required");
 const processes = [];
 function start(cwd, port, env) {
   const child = spawn(process.execPath, [path.join(cwd, "node_modules", "next", "dist", "bin", "next"), "start", "-p", String(port)], { cwd, env: { ...process.env, ...env }, stdio: "ignore" });
@@ -18,22 +17,23 @@ async function ready(target) {
   throw Error("Built app unavailable");
 }
 async function main() {
-  start(system, 3201, { SESSION_SECRET: "isolated-test-staff-session-secret-123456", MATA3_CONFIRMATION_SECRET: "isolated-test-confirmation-secret-123456789", MATA3_DELIVERY_CONFIG_JSON: delivery });
+  const { PrismaClient } = require("@prisma/client"), db = new PrismaClient();
+  const destination = await db.shippingDestination.findFirstOrThrow({ where: { market: { code: "MOROCCO" }, kind: "CITY" } });
+  start(system, 3201, { SESSION_SECRET: "isolated-test-staff-session-secret-123456", MATA3_CONFIRMATION_SECRET: "isolated-test-confirmation-secret-123456789" });
   await ready("http://localhost:3201/api/public/v1/checkout/config?market=MOROCCO");
   start(store, 3202, { MATA3_PUBLIC_API_BASE_URL: "http://localhost:3201" });
   await ready("http://localhost:3202/ma/en/checkout");
-  let response = await fetch("http://localhost:3202/api/checkout/config?market=ma");
+  let response = await fetch("http://localhost:3202/api/checkout/config?market=ma&destinationKey=" + destination.publicKey);
   assert.equal(response.status, 200);
   let value = await response.json();
   assert.equal(value.checkoutAvailable, true);
   assert.equal(value.deliveryMethods[0].amountMinor, 1500);
-  const { PrismaClient } = require("@prisma/client"), db = new PrismaClient();
-  const listing = await db.marketListing.findFirst({ where: { market: { code: "MOROCCO" }, product: { publicSlug: "controller" }, variant: { color: "Black" } } });
+  const listing = await db.marketListing.findFirst({ where: { market: { code: "MOROCCO" }, product: { publicSlug: "controller" } } });
   assert(listing);
   response = await fetch("http://localhost:3202/api/orders", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
     market: "ma", idempotencyKey: randomUUID(), lines: [{ key: listing.publicOfferId, quantity: 1 }],
     customer: { fullName: "Smoke Guest", phone: "0612345678", region: "Test Region", city: "Test City", address: "12 Test Street" },
-    deliveryCode: "TEST_DELIVERY_MA", paymentCode: "BANK_TRANSFER",
+    destinationKey: destination.publicKey, deliveryCode: "TEST_DELIVERY_MA", paymentCode: "BANK_TRANSFER",
   }) });
   assert.equal(response.status, 201);
   value = await response.json();
@@ -54,7 +54,7 @@ async function main() {
   assert.equal(response.status, 404);
   response = await fetch("http://localhost:3201/api/storefront-orders/" + reference + "/status", { method: "PATCH", redirect: "manual", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "PROCESSING" }) });
   assert.ok(response.status === 307 || response.status === 403);
-  const owner = await db.user.create({ data: { name: "Test Owner", email: "smoke-owner@example.test", passwordHash: "TEST-NOT-A-LOGIN", role: "OWNER" } });
+  const owner = await db.user.upsert({ where: { email: "smoke-owner@example.test" }, create: { name: "Test Owner", email: "smoke-owner@example.test", passwordHash: "TEST-NOT-A-LOGIN", role: "OWNER" }, update: {} });
   const signature = createHmac("sha256", "isolated-test-staff-session-secret-123456").update(owner.id).digest("hex");
   const cookie = "mata3_session=" + owner.id + "." + signature;
   response = await fetch("http://localhost:3201/api/storefront-orders/" + reference, { headers: { Cookie: cookie } });

@@ -8,6 +8,6 @@ export async function GET(_request: NextRequest, context: { params: Promise<{ re
   try {
     const order = await prisma.storefrontOrder.findUnique({ where: { reference }, include: { lines: true } });
     if (!order) return NextResponse.json({ error: "Order not found" }, { status: 404 });
-    return NextResponse.json({ ...publicOrder(order), phone: order.normalizedPhone, ...(order.email ? { email: order.email } : {}) }, { headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json({ ...publicOrder(order), fulfillmentStatus: order.fulfillmentStatus, shippingDestinationSnapshot: order.shippingDestinationSnapshot, shippingTariffId: order.shippingTariffId, phone: order.normalizedPhone, ...(order.email ? { email: order.email } : {}) }, { headers: { "Cache-Control": "no-store" } });
   } catch { return NextResponse.json({ error: "Order unavailable" }, { status: 503 }); }
 }

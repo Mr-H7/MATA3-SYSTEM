@@ -13,7 +13,9 @@
     "db:migrate": "prisma migrate dev",
     "db:seed": "tsx --env-file=.env prisma/seed.ts",
     "db:deploy": "prisma migrate deploy",
-    "db:bootstrap:production": "tsx prisma/production-bootstrap.ts"
+    "db:bootstrap:production": "tsx prisma/production-bootstrap.ts",
+    "test:shipping": "tsx scripts/verify-shipping-v12d.ts",
+    "smoke:shipping": "node scripts/smoke-shipping-v12d.mjs"
   },
   "dependencies": {
     "@prisma/client": "^6.15.0",

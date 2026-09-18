@@ -7,11 +7,18 @@ const db = new PrismaClient();
 async function main() {
   if (!process.env.DATABASE_URL?.includes("/mata3_catalogue_v12b_test")) throw Error("Isolated test database required");
   process.env.MATA3_CONFIRMATION_SECRET = "isolated-test-confirmation-secret-123456789";
-  process.env.MATA3_DELIVERY_CONFIG_JSON = JSON.stringify([
-    { market: "EGYPT", code: "TEST_DELIVERY_EG", label: "Configured Egypt delivery", amountMinor: 5000, enabled: true },
-    { market: "MOROCCO", code: "TEST_DELIVERY_MA", label: "Configured Morocco delivery", amountMinor: 1500, enabled: true },
-  ]);
   const eg = await db.market.findUniqueOrThrow({ where: { code: "EGYPT" } }), ma = await db.market.findUniqueOrThrow({ where: { code: "MOROCCO" } });
+  const egRegion = await db.shippingDestination.create({ data: { marketId: eg.id, kind: "REGION", name: "Test Region", active: true } });
+  const egCity = await db.shippingDestination.create({ data: { marketId: eg.id, kind: "CITY", name: "Test City", parentId: egRegion.id, active: true } });
+  const maRegion = await db.shippingDestination.create({ data: { marketId: ma.id, kind: "REGION", name: "Test Region", active: true } });
+  const maCity = await db.shippingDestination.create({ data: { marketId: ma.id, kind: "CITY", name: "Test City", parentId: maRegion.id, active: true } });
+  const egMethod = await db.shippingMethod.create({ data: { marketId: eg.id, provider: "BOSTA", code: "TEST_DELIVERY_EG", label: "Configured Egypt delivery", active: true } });
+  const maMethod = await db.shippingMethod.create({ data: { marketId: ma.id, provider: "OZONEXPRESS", code: "TEST_DELIVERY_MA", label: "Configured Morocco delivery", active: true } });
+  await db.shippingMarketConfiguration.createMany({ data: [{ marketId: eg.id, enabled: true }, { marketId: ma.id, enabled: true }] });
+  await db.shippingTariff.create({ data: { marketId: eg.id, methodId: egMethod.id, destinationId: egCity.id, amountMinor: 5000,
+    currency: "EGP", active: true, effectiveFrom: new Date(Date.now() - 60000) } });
+  await db.shippingTariff.create({ data: { marketId: ma.id, methodId: maMethod.id, destinationId: maCity.id, amountMinor: 1500,
+    currency: "MAD", active: true, effectiveFrom: new Date(Date.now() - 60000) } });
   const blackEg = await db.marketListing.findFirstOrThrow({ where: { marketId: eg.id, product: { publicSlug: "controller" }, variant: { color: "Black" } } });
   const blackMa = await db.marketListing.findFirstOrThrow({ where: { marketId: ma.id, product: { publicSlug: "controller" }, variant: { color: "Black" } } });
   const bundle = await db.bundleMarketListing.findFirstOrThrow({ where: { marketId: eg.id, bundle: { publicSlug: "controller-bundle" } } });
@@ -21,13 +28,13 @@ async function main() {
   const input = (key: string, market: "EGYPT" | "MOROCCO" = "EGYPT", quantity = 1): GuestOrderInput => ({
     market, idempotencyKey: randomUUID(), lines: [{ key, quantity }],
     customer: { fullName: "Guest Customer", phone: market === "EGYPT" ? "01012345678" : "0612345678", region: "Test Region", city: "Test City", address: "12 Test Street" },
-    deliveryCode: market === "EGYPT" ? "TEST_DELIVERY_EG" : "TEST_DELIVERY_MA", paymentCode: "BANK_TRANSFER",
+    destinationKey: market === "EGYPT" ? egCity.publicKey : maCity.publicKey, deliveryCode: market === "EGYPT" ? "TEST_DELIVERY_EG" : "TEST_DELIVERY_MA", paymentCode: "BANK_TRANSFER",
   });
   const fail = async (value: GuestOrderInput, code: string) => assert.rejects(() => createGuestOrder(value), error => error instanceof GuestOrderError && error.code === code);
-  const priorConfig = process.env.MATA3_DELIVERY_CONFIG_JSON; delete process.env.MATA3_DELIVERY_CONFIG_JSON;
-  assert.equal(checkoutConfiguration("EGYPT").checkoutAvailable, false);
+  await db.shippingMarketConfiguration.update({ where: { marketId: eg.id }, data: { enabled: false } });
+  assert.equal((await checkoutConfiguration("EGYPT", egCity.publicKey)).checkoutAvailable, false);
   await fail(input(blackEg.publicOfferId), "CHECKOUT_UNAVAILABLE");
-  process.env.MATA3_DELIVERY_CONFIG_JSON = priorConfig;
+  await db.shippingMarketConfiguration.update({ where: { marketId: eg.id }, data: { enabled: true } });
   await fail(input(blackEg.publicOfferId, "MOROCCO"), "CART_CHANGED");
   await fail(input(draft.publicOfferId), "CART_CHANGED");
   await fail(input(hidden.publicOfferId), "CART_CHANGED");

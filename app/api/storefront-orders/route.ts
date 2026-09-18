@@ -11,12 +11,12 @@ export async function GET(request: NextRequest) {
     const where = market ? { marketCode: market } : {};
     const [rows, total] = await Promise.all([
       prisma.storefrontOrder.findMany({ where, orderBy: { placedAt: "desc" }, skip: (page - 1) * 30, take: 30,
-        select: { reference: true, marketCode: true, currency: true, status: true, paymentStatus: true, customerName: true, normalizedPhone: true, grandTotal: true, placedAt: true } }),
+        select: { reference: true, marketCode: true, currency: true, status: true, paymentStatus: true, fulfillmentStatus: true, customerName: true, normalizedPhone: true, grandTotal: true, placedAt: true } }),
       prisma.storefrontOrder.count({ where }),
     ]);
     return NextResponse.json({ page, total, items: rows.map(row => ({
       reference: row.reference, market: row.marketCode, currency: row.currency, status: row.status,
-      paymentStatus: row.paymentStatus, customerName: row.customerName, phone: row.normalizedPhone,
+      paymentStatus: row.paymentStatus, fulfillmentStatus: row.fulfillmentStatus, customerName: row.customerName, phone: row.normalizedPhone,
       grandTotal: { amountMinor: row.grandTotal.mul(100).toNumber(), currency: row.currency },
       placedAt: row.placedAt.toISOString(),
     })) }, { headers: { "Cache-Control": "no-store" } });

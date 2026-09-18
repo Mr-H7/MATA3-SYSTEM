@@ -5,11 +5,12 @@ import { availableStock, resolveListingInventory } from "./inventory-source";
 import { normalizeGuestPhone } from "./guest-phone";
 import { quotePublicCartInTransaction, type QuoteRequestLine } from "./public-cart-quote";
 import { prisma } from "./prisma";
+import { resolveShipping, ShippingUnavailable, publicDestination } from "./shipping";
 
 export type GuestOrderInput = {
   market: CheckoutMarket; lines: QuoteRequestLine[]; idempotencyKey: string;
   customer: { fullName: string; phone: string; email?: string; region: string; city: string; address: string; addressNotes?: string };
-  deliveryCode: string; paymentCode: string;
+  destinationKey: string; deliveryCode: string; paymentCode: string;
 };
 export class GuestOrderError extends Error {
   constructor(public code: "INVALID_INPUT" | "CHECKOUT_UNAVAILABLE" | "CART_CHANGED" | "CONFLICT" | "OUT_OF_STOCK", public status: number) { super(code); }
@@ -35,7 +36,8 @@ export function publicOrder(order: OrderWithLines) {
     status: order.status, paymentStatus: order.paymentStatus, placedAt: order.placedAt.toISOString(),
     customerName: order.customerName,
     address: { region: order.region, city: order.city, detailedAddress: order.address, ...(order.addressNotes ? { notes: order.addressNotes } : {}) },
-    delivery: { code: order.deliveryCode, label: order.deliveryLabel, amount: amount(order.deliveryAmount, currency) },
+    delivery: { code: order.deliveryCode, label: order.deliveryLabel, amount: amount(order.deliveryAmount, currency),
+      ...(order.shippingPricingProvenance ? { pricingProvenance: order.shippingPricingProvenance } : {}) },
     payment: { code: order.paymentCode, label: order.paymentLabel },
     itemsSubtotal: amount(order.itemsSubtotal, currency), adjustments: amount(order.adjustments, currency),
     grandTotal: amount(order.grandTotal, currency),
@@ -59,7 +61,7 @@ function normalized(input: GuestOrderInput) {
   const customer = input.customer;
   for (const value of [customer.fullName, customer.phone, customer.region, customer.city, customer.address])
     if (typeof value !== "string" || !value.trim()) throw new GuestOrderError("INVALID_INPUT", 400);
-  if (typeof input.deliveryCode !== "string" || typeof input.paymentCode !== "string"
+  if (typeof input.destinationKey !== "string" || !/^[a-f0-9-]{36}$/i.test(input.destinationKey) || typeof input.deliveryCode !== "string" || typeof input.paymentCode !== "string"
     || (customer.email !== undefined && typeof customer.email !== "string")
     || (customer.addressNotes !== undefined && typeof customer.addressNotes !== "string")) throw new GuestOrderError("INVALID_INPUT", 400);
   const phone = normalizeGuestPhone(input.market, customer.phone);
@@ -70,12 +72,14 @@ function normalized(input: GuestOrderInput) {
     || customer.fullName.length > 120 || customer.region.length > 100 || customer.city.length > 100 || customer.address.length > 300
     || (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) || (email?.length ?? 0) > 254
     || (customer.addressNotes?.length ?? 0) > 300) throw new GuestOrderError("INVALID_INPUT", 400);
-  return { ...input, customer: { fullName, phone, region, city, address, ...(email ? { email } : {}), ...(addressNotes ? { addressNotes } : {}) } };
+  return { market: input.market, lines: input.lines, idempotencyKey: input.idempotencyKey, destinationKey: input.destinationKey,
+    deliveryCode: input.deliveryCode, paymentCode: input.paymentCode,
+    customer: { fullName, phone, region, city, address, ...(email ? { email } : {}), ...(addressNotes ? { addressNotes } : {}) } };
 }
 type Allocation = { inventoryId: string; sourceMarketCode: string; quantityPerOrderUnit: number };
 type Stock = { previous: number; reserved: number; demand: number };
 export async function createGuestOrder(raw: GuestOrderInput) {
-  const input = normalized(raw), config = checkoutConfiguration(input.market);
+  const input = normalized(raw), config = await checkoutConfiguration(input.market, input.destinationKey);
   const delivery = config.deliveryMethods.find(item => item.code === input.deliveryCode);
   const payment = config.paymentMethods.find(item => item.code === input.paymentCode);
   const requestHash = createHash("sha256").update(JSON.stringify(input)).digest("hex");
@@ -95,6 +99,9 @@ export async function createGuestOrder(raw: GuestOrderInput) {
         }
         const market = await tx.market.findUnique({ where: { code: input.market } });
         if (!market || market.currency !== config.currency) throw new GuestOrderError("CHECKOUT_UNAVAILABLE", 503);
+        let shipping;
+        try { shipping = await resolveShipping(tx, input.market, input.destinationKey, input.deliveryCode); }
+        catch (error) { if (error instanceof ShippingUnavailable) throw new GuestOrderError("CHECKOUT_UNAVAILABLE", 409); throw error; }
         const quote = await quotePublicCartInTransaction(tx, input.market, input.lines);
         if (!quote || !quote.canProceed) throw new GuestOrderError("CART_CHANGED", 409);
         const stock = new Map<string, Stock>();
@@ -143,14 +150,20 @@ export async function createGuestOrder(raw: GuestOrderInput) {
           if (updated.count !== 1) throw new GuestOrderError("OUT_OF_STOCK", 409);
           await tx.inventoryMovement.create({ data: { inventoryId, quantityChange: -state.demand, previousQuantity: state.previous, newQuantity: state.previous - state.demand, reason: "STOREFRONT_ORDER", reference: publicReference } });
         }
-        const subtotal = decimalFromMinor(quote.itemsSubtotal.amountMinor), shipping = decimalFromMinor(delivery.amountMinor);
+        const subtotal = decimalFromMinor(quote.itemsSubtotal.amountMinor), shippingAmount = decimalFromMinor(shipping.tariff.amountMinor);
         return tx.storefrontOrder.create({ data: {
           reference: publicReference, idempotencyKey: input.idempotencyKey, requestHash,
           marketId: market.id, marketCode: market.code, currency: market.currency,
           customerName: input.customer.fullName, normalizedPhone: input.customer.phone, email: input.customer.email,
-          region: input.customer.region, city: input.customer.city, address: input.customer.address, addressNotes: input.customer.addressNotes,
-          deliveryCode: delivery.code, deliveryLabel: delivery.label, deliveryAmount: shipping,
-          paymentCode: payment.code, paymentLabel: payment.label, itemsSubtotal: subtotal, grandTotal: subtotal.add(shipping),
+          region: shipping.path.find(item => item.kind === "REGION")?.name ?? shipping.path[0].name,
+          city: shipping.path.find(item => item.kind === "CITY")?.name ?? shipping.path[shipping.path.length - 1].name,
+          address: input.customer.address, addressNotes: input.customer.addressNotes,
+          deliveryCode: shipping.method.code, deliveryLabel: shipping.method.label, deliveryAmount: shippingAmount,
+          shippingDestinationId: shipping.path[shipping.path.length - 1].id,
+          shippingDestinationSnapshot: publicDestination(shipping.path),
+          shippingProvider: shipping.method.provider, shippingPricingProvenance: shipping.tariff.provenance,
+          shippingTariffId: shipping.tariff.id, fulfillmentStatus: "READY_FOR_FULFILLMENT",
+          paymentCode: payment.code, paymentLabel: payment.label, itemsSubtotal: subtotal, grandTotal: subtotal.add(shippingAmount),
           confirmationUntil: new Date(Date.now() + 15 * 60 * 1000),
           lines: { create: lines.map(line => ({ kind: line.kind, name: line.name, variantLabel: line.variantLabel, attributes: line.attributes,
             quantity: line.quantity, unitPrice: line.unitPrice, lineTotal: line.lineTotal,
