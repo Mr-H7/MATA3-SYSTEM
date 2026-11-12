@@ -1,5 +1,6 @@
 import { InventoryType, Prisma, WebPublicationStatus } from "@prisma/client";
 import { availableStock, resolveListingInventory } from "./inventory-source";
+import { onDemandQuantityDecision } from "./on-demand-policy";
 import { exactMoney, type PublicMoney } from "./public-catalogue";
 import { prisma } from "./prisma";
 
@@ -60,6 +61,12 @@ async function quoteProduct(tx: Prisma.TransactionClient, line: WorkLine, listin
   line.name = listing.product.nameEn;
   line.label = [listing.variant?.color, listing.variant?.size].filter(Boolean).join(" / ") || "Standard";
   setPrice(line, listing.price, listing.market.code, observed);
+  if (listing.inventoryType === InventoryType.ON_DEMAND) {
+    const decision = onDemandQuantityDecision(listing, line.quantity);
+    if (decision !== "ok") line.codes.push(decision);
+    return;
+  }
+  if (listing.inventoryType !== InventoryType.PHYSICAL_STOCK) { line.codes.push("UNAVAILABLE"); return; }
   const inventory = await inventoryFor(tx, listing);
   if (!inventory) { line.codes.push("UNAVAILABLE"); return; }
   addDemand(line.demand, inventory.id, line.quantity);

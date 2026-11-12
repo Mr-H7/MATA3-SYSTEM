@@ -15,6 +15,7 @@
     "db:deploy": "prisma migrate deploy",
     "db:bootstrap:production": "tsx prisma/production-bootstrap.ts",
     "test:shipping": "tsx scripts/verify-shipping-v12d.ts",
+    "test:on-demand": "tsx scripts/verify-on-demand-commerce.ts",
     "smoke:shipping": "node scripts/smoke-shipping-v12d.mjs"
   },
   "dependencies": {

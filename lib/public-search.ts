@@ -50,6 +50,7 @@ function publicProductCard(detail: PublicProductDetail, options: PublicSearchFil
     kind: "product", slug: detail.slug, nameAr: detail.nameAr, nameEn: detail.nameEn,
     ...(detail.category ? { category: detail.category } : {}),
     price: lowest.price, purchasable: offers.some(offer => offer.purchasable),
+    ...(offers.filter(offer => offer.purchasable).length > 0 && offers.filter(offer => offer.purchasable).every(offer => offer.fulfillment === "SUPPLIER_ON_DEMAND") ? { fulfillment: "SUPPLIER_ON_DEMAND" as const } : {}),
     ...(lowest.media[0] ? { cover: lowest.media[0] } : detail.cover ? { cover: detail.cover } : {}),
   };
 }

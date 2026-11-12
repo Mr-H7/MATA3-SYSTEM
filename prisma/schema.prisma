@@ -54,6 +54,22 @@ enum InventoryType {
   PREORDER
 }
 
+enum OnDemandApproval {
+  UNAPPROVED
+  APPROVED
+}
+
+enum OnDemandBasis {
+  NONE
+  CONFIRMED_AVAILABILITY
+  APPROVED_FULFILLMENT_POLICY
+}
+
+enum LineFulfillmentSource {
+  OWNED_STOCK
+  SUPPLIER_ON_DEMAND
+}
+
 enum Gender {
   MEN
   WOMEN
@@ -247,6 +263,7 @@ model WebProductMedia {
   isCover           Boolean              @default(false)
   sortOrder         Int                  @default(0)
   publicationStatus WebPublicationStatus @default(DRAFT)
+  importKey         String?              @unique
   productId         String?
   product           Product?             @relation("ProductWebMedia", fields: [productId], references: [id], onDelete: Restrict)
   variantId         String?
@@ -286,6 +303,9 @@ model MarketListing {
   compareAt               Decimal?             @db.Decimal(12, 2)
   available               Boolean              @default(true)
   inventoryType           InventoryType        @default(PHYSICAL_STOCK)
+  onDemandApproval        OnDemandApproval     @default(UNAPPROVED)
+  onDemandBasis           OnDemandBasis        @default(NONE)
+  onDemandMaxPerOrder     Int?
   minimumStock            Int                  @default(0)
   notes                   String?
   inventorySourceMarketId String?
@@ -555,6 +575,8 @@ model StorefrontOrderLine {
   quantity     Int
   unitPrice    Decimal                     @db.Decimal(12, 2)
   lineTotal    Decimal                     @db.Decimal(12, 2)
+  fulfillmentSource LineFulfillmentSource   @default(OWNED_STOCK)
+  supplierId   String?
   allocations  StorefrontOrderAllocation[]
 }
 

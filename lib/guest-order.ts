@@ -1,7 +1,8 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { InventoryType, Prisma, type StorefrontOrder } from "@prisma/client";
 import { checkoutConfiguration, currencyFor, decimalFromMinor, type CheckoutMarket } from "./checkout-config";
-import { availableStock, resolveListingInventory } from "./inventory-source";
+import { resolveListingInventory } from "./inventory-source";
+import { onDemandQuantityDecision } from "./on-demand-policy";
 import { normalizeGuestPhone } from "./guest-phone";
 import { quotePublicCartInTransaction, type QuoteRequestLine } from "./public-cart-quote";
 import { prisma } from "./prisma";
@@ -42,7 +43,8 @@ export function publicOrder(order: OrderWithLines) {
     itemsSubtotal: amount(order.itemsSubtotal, currency), adjustments: amount(order.adjustments, currency),
     grandTotal: amount(order.grandTotal, currency),
     lines: order.lines.map(line => ({ kind: line.kind, name: line.name, ...(line.variantLabel ? { variantLabel: line.variantLabel } : {}),
-      attributes: line.attributes, quantity: line.quantity, unitPrice: amount(line.unitPrice, currency), lineTotal: amount(line.lineTotal, currency) })),
+      attributes: line.attributes, quantity: line.quantity, unitPrice: amount(line.unitPrice, currency), lineTotal: amount(line.lineTotal, currency),
+      fulfillment: line.fulfillmentSource })),
     availableCustomerActions: [] as string[],
   };
 }
@@ -105,20 +107,28 @@ export async function createGuestOrder(raw: GuestOrderInput) {
         const quote = await quotePublicCartInTransaction(tx, input.market, input.lines);
         if (!quote || !quote.canProceed) throw new GuestOrderError("CART_CHANGED", 409);
         const stock = new Map<string, Stock>();
-        const lines: Array<{ kind: string; name: string; variantLabel?: string; attributes: Prisma.InputJsonValue; quantity: number; unitPrice: Prisma.Decimal; lineTotal: Prisma.Decimal; allocations: Allocation[] }> = [];
+        const lines: Array<{ kind: string; name: string; variantLabel?: string; attributes: Prisma.InputJsonValue; quantity: number; unitPrice: Prisma.Decimal; lineTotal: Prisma.Decimal; allocations: Allocation[]; fulfillmentSource: "OWNED_STOCK" | "SUPPLIER_ON_DEMAND"; supplierId?: string }> = [];
         for (let index = 0; index < input.lines.length; index++) {
           const requested = input.lines[index], quoted = quote.lines[index];
           const allocations: Allocation[] = [];
           let attributes: Prisma.InputJsonValue = {};
+          let fulfillmentSource: "OWNED_STOCK" | "SUPPLIER_ON_DEMAND" = "OWNED_STOCK";
+          let supplierId: string | undefined;
           if (quoted.kind === "product") {
             const listing = await tx.marketListing.findUnique({ where: { publicOfferId: requested.key }, include: { product: true, variant: true, market: true, inventory: true } });
-            if (!listing || listing.marketId !== market.id || listing.inventoryType !== InventoryType.PHYSICAL_STOCK) throw new GuestOrderError("CART_CHANGED", 409);
-            const resolved = await resolveListingInventory(tx, listing);
-            if (!resolved.inventory) throw new GuestOrderError("OUT_OF_STOCK", 409);
-            allocations.push({ inventoryId: resolved.inventory.id, sourceMarketCode: resolved.inventorySourceMarketCode, quantityPerOrderUnit: 1 });
+            if (!listing || listing.marketId !== market.id || listing.product.status !== "ACTIVE" || !listing.product.publicSlug || listing.webPublicationStatus !== "PUBLISHED") throw new GuestOrderError("CART_CHANGED", 409);
             attributes = { ...(listing.variant?.color ? { color: listing.variant.color } : {}), ...(listing.variant?.size ? { size: listing.variant.size } : {}) };
-            const current = stock.get(resolved.inventory.id) ?? { previous: resolved.inventory.currentStock, reserved: resolved.inventory.reservedStock, demand: 0 };
-            current.demand += requested.quantity; stock.set(resolved.inventory.id, current);
+            if (listing.inventoryType === InventoryType.ON_DEMAND) {
+              if (onDemandQuantityDecision(listing, requested.quantity) !== "ok") throw new GuestOrderError("CART_CHANGED", 409);
+              fulfillmentSource = "SUPPLIER_ON_DEMAND";
+              supplierId = listing.supplierId ?? undefined;
+            } else if (listing.inventoryType === InventoryType.PHYSICAL_STOCK) {
+              const resolved = await resolveListingInventory(tx, listing);
+              if (!resolved.inventory) throw new GuestOrderError("OUT_OF_STOCK", 409);
+              allocations.push({ inventoryId: resolved.inventory.id, sourceMarketCode: resolved.inventorySourceMarketCode, quantityPerOrderUnit: 1 });
+              const current = stock.get(resolved.inventory.id) ?? { previous: resolved.inventory.currentStock, reserved: resolved.inventory.reservedStock, demand: 0 };
+              current.demand += requested.quantity; stock.set(resolved.inventory.id, current);
+            } else throw new GuestOrderError("CART_CHANGED", 409);
           } else {
             const listing = await tx.bundleMarketListing.findUnique({ where: { publicOfferId: requested.key }, include: { bundle: { include: { items: { include: { variant: true } } } } } });
             if (!listing || listing.marketId !== market.id || !listing.bundle.items.length) throw new GuestOrderError("CART_CHANGED", 409);
@@ -141,7 +151,7 @@ export async function createGuestOrder(raw: GuestOrderInput) {
           if (!quoted.unitPrice || !quoted.lineTotal || !quoted.name || !quoted.kind) throw new GuestOrderError("CART_CHANGED", 409);
           lines.push({ kind: quoted.kind, name: quoted.name, ...(quoted.label ? { variantLabel: quoted.label } : {}),
             attributes, quantity: requested.quantity, unitPrice: decimalFromMinor(quoted.unitPrice.amountMinor),
-            lineTotal: decimalFromMinor(quoted.lineTotal.amountMinor), allocations });
+            lineTotal: decimalFromMinor(quoted.lineTotal.amountMinor), allocations, fulfillmentSource, ...(supplierId ? { supplierId } : {}) });
         }
         const publicReference = reference(input.market);
         for (const [inventoryId, state] of stock) {
@@ -162,12 +172,13 @@ export async function createGuestOrder(raw: GuestOrderInput) {
           shippingDestinationId: shipping.path[shipping.path.length - 1].id,
           shippingDestinationSnapshot: publicDestination(shipping.path),
           shippingProvider: shipping.method.provider, shippingPricingProvenance: shipping.tariff.provenance,
-          shippingTariffId: shipping.tariff.id, fulfillmentStatus: "READY_FOR_FULFILLMENT",
+          shippingTariffId: shipping.tariff.id, fulfillmentStatus: lines.some(line => line.fulfillmentSource === "SUPPLIER_ON_DEMAND") ? "MANUAL_FULFILLMENT" : "READY_FOR_FULFILLMENT",
           paymentCode: payment.code, paymentLabel: payment.label, itemsSubtotal: subtotal, grandTotal: subtotal.add(shippingAmount),
           confirmationUntil: new Date(Date.now() + 15 * 60 * 1000),
           lines: { create: lines.map(line => ({ kind: line.kind, name: line.name, variantLabel: line.variantLabel, attributes: line.attributes,
             quantity: line.quantity, unitPrice: line.unitPrice, lineTotal: line.lineTotal,
-            allocations: { create: line.allocations } })) },
+            fulfillmentSource: line.fulfillmentSource, supplierId: line.supplierId,
+            ...(line.allocations.length ? { allocations: { create: line.allocations } } : {}) })) },
         }, include: includeOrder });
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 15000 });
       return { order: publicOrder(created), confirmationToken: capability(created), replayed: false };

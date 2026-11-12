@@ -1,13 +1,15 @@
 import { InventoryType, Prisma, WebPublicationStatus } from "@prisma/client";
 import { prisma } from "./prisma";
 import { availableStock, resolveListingInventory } from "./inventory-source";
+import { approvedOnDemandPolicy } from "./on-demand-policy";
 
 export type PublicMoney = { amountMinor: number; currency: "EGP" | "MAD" };
 export type PublicMarket = { code: "EGYPT" | "MOROCCO"; currency: "EGP" | "MAD"; locales: string[] };
 export type PublicCategory = { key: string; name: string; department: string };
 export type PublicProductMedia = { type: "IMAGE" | "VIDEO"; url: string; altText: string; isCover: boolean; sortOrder: number };
-export type PublicOffer = { offerId: string; label: string; attributes: { color?: string; size?: string }; price: PublicMoney; purchasable: boolean; media: PublicProductMedia[] };
-export type PublicProductCard = { kind: "product"; slug: string; nameAr: string; nameEn: string; category?: PublicCategory; price: PublicMoney; purchasable: boolean; cover?: PublicProductMedia };
+export type PublicFulfillment = "OWNED_STOCK" | "SUPPLIER_ON_DEMAND";
+export type PublicOffer = { offerId: string; label: string; attributes: { color?: string; size?: string }; price: PublicMoney; purchasable: boolean; fulfillment?: PublicFulfillment; maxPerOrder?: number; media: PublicProductMedia[] };
+export type PublicProductCard = { kind: "product"; slug: string; nameAr: string; nameEn: string; category?: PublicCategory; price: PublicMoney; purchasable: boolean; fulfillment?: PublicFulfillment; cover?: PublicProductMedia };
 export type PublicProductDetail = PublicProductCard & { descriptionAr?: string; descriptionEn?: string; media: PublicProductMedia[]; offers: PublicOffer[] };
 export type PublicBundle = { kind: "bundle"; slug: string; name: string; price: PublicMoney; purchasable: boolean; media: PublicProductMedia[]; components: { name: string; quantity: number }[]; offerId: string };
 export type PublicPage<T> = { version: 1; market: "EGYPT" | "MOROCCO"; page: number; pageSize: number; total: number; items: T[] };
@@ -35,21 +37,33 @@ function category(product: ProductRow): PublicCategory | undefined {
   const row = product.category;
   return row && !row.archived ? { key: row.publicKey, name: row.name, department: row.department.name } : undefined;
 }
-async function eligible(listing: ListingRow): Promise<boolean> {
-  if (!listing.available || listing.inventoryType !== InventoryType.PHYSICAL_STOCK) return false;
-  try { return availableStock((await resolveListingInventory(prisma, listing)).inventory) > 0; }
-  catch { return false; }
+async function purchaseMode(listing: ListingRow): Promise<PublicFulfillment | null> {
+  if (!listing.available) return null;
+  if (listing.inventoryType === InventoryType.PHYSICAL_STOCK) {
+    try { return availableStock((await resolveListingInventory(prisma, listing)).inventory) > 0 ? "OWNED_STOCK" : null; }
+    catch { return null; }
+  }
+  if (listing.inventoryType === InventoryType.ON_DEMAND) return approvedOnDemandPolicy(listing) ? "SUPPLIER_ON_DEMAND" : null;
+  return null;
+}
+function supplierFulfillment(offers: PublicOffer[]): PublicFulfillment | undefined {
+  const purchasable = offers.filter(offer => offer.purchasable);
+  return purchasable.length > 0 && purchasable.every(offer => offer.fulfillment === "SUPPLIER_ON_DEMAND") ? "SUPPLIER_ON_DEMAND" : undefined;
 }
 async function offer(listing: ListingRow, productMedia: PublicProductMedia[]): Promise<PublicOffer> {
   const variant = listing.variant;
   const attributes = { ...(variant?.color ? { color: variant.color } : {}), ...(variant?.size ? { size: variant.size } : {}) };
   const variantMedia = variant ? media(variant.webMedia) : [];
+  const mode = await purchaseMode(listing);
+  const policy = mode === "SUPPLIER_ON_DEMAND" ? approvedOnDemandPolicy(listing) : null;
   return {
     offerId: listing.publicOfferId,
     label: [variant?.color, variant?.size].filter(Boolean).join(" / ") || "Standard",
     attributes,
     price: exactMoney(listing.price, listing.market.code),
-    purchasable: await eligible(listing),
+    purchasable: mode !== null,
+    ...(mode ? { fulfillment: mode } : {}),
+    ...(policy ? { maxPerOrder: policy.maxPerOrder } : {}),
     media: variantMedia.length ? [...variantMedia, ...productMedia.filter(item => !item.isCover)] : productMedia,
   };
 }
@@ -63,6 +77,7 @@ function card(product: ProductRow, offers: PublicOffer[]): PublicProductCard {
     ...(category(product) ? { category: category(product) } : {}),
     price: pricedOffers.reduce((min, item) => item.price.amountMinor < min.amountMinor ? item.price : min, first.price),
     purchasable: offers.some(item => item.purchasable),
+    ...(supplierFulfillment(offers) ? { fulfillment: "SUPPLIER_ON_DEMAND" as const } : {}),
     ...(allMedia[0] ? { cover: allMedia[0] } : first.media[0] ? { cover: first.media[0] } : {}),
   };
 }
